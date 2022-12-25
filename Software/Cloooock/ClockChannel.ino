@@ -14,7 +14,7 @@ ClockChannel::ClockChannel(int channelPin, int ledPin, int division) {
   _division = division;
   _value = 0;
   _barCount = 0;
-  _intervals = {0};
+  _intervals = nullptr;
   _startTime = 0;
   _hits = 0;
 }
@@ -64,7 +64,9 @@ void ClockChannel::update() {
 }
 
 void ClockChannel::assignDivision(int newDivision) {
-  free(_intervals);
+  if (intervals != nullptr) {
+    free(_intervals);
+  }
   _division = newDivision * 2;
   _intervals = (int *)malloc(_division * sizeof(int));
   int beatLength = barLengthMillisecond/_division;
@@ -75,5 +77,16 @@ void ClockChannel::assignDivision(int newDivision) {
     if(i % 2 == 0 && i/2 <= reminder) { // crude way to distribute the reminder or part of it evenly in the list.
       _intervals[i] ++;
     }
+  }
+}
+
+int counter = 0;
+int thresh = 1000/4;
+
+loop {
+  counter += 1;
+  if (counter%250 ==) {
+    counter = 0;
+    changeOutput();
   }
 }
