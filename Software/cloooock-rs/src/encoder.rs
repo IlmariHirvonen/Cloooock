@@ -1,4 +1,3 @@
-use core::prelude::*;
 use arduino_hal::{
     adc::{self, Channel},
     clock::MHz16,
@@ -6,6 +5,7 @@ use arduino_hal::{
     prelude::*,
     Adc, Usart,
 };
+use core::prelude::*;
 
 pub struct Encoder<'a> {
     adc: Adc,

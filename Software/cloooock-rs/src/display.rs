@@ -1,5 +1,6 @@
 use arduino_hal::{
-    port::{Pin, mode::Output}, delay_us
+    delay_us,
+    port::{mode::Output, Pin},
 };
 use embedded_hal::digital::v2::{OutputPin, PinState};
 
@@ -24,8 +25,8 @@ fn shift_out(byte: u8, sck_pin: &mut Pin<Output>, data_pin: &mut Pin<Output>) {
     }
 
     for i in 0..8 {
-        let bit = (byte >> (7-i)) & 1;
-        cycle(bit != 0 , sck_pin, data_pin)
+        let bit = (byte >> (7 - i)) & 1;
+        cycle(bit != 0, sck_pin, data_pin)
     }
 }
 
@@ -34,8 +35,8 @@ pub trait Displayable {
 }
 
 impl Displayable for u16 {
-    fn display_digit(&self, index: u8) -> u8{
-        let thousands = ((*self/1000) % 10) as u8;
+    fn display_digit(&self, index: u8) -> u8 {
+        let thousands = ((*self / 1000) % 10) as u8;
         let hundreds: u8 = ((*self / 100) % 10) as u8;
         let tens: u8 = ((*self / 10) % 10) as u8;
         let ones: u8 = (*self % 10) as u8;
@@ -45,7 +46,7 @@ impl Displayable for u16 {
             1 => hundreds,
             2 => tens,
             3 => ones,
-            _ => unreachable!()
+            _ => unreachable!(),
         }
     }
 }
@@ -57,8 +58,8 @@ pub struct Display {
     index: u8,
 }
 
-impl Display { 
-    pub fn new(clk_pin: Pin<Output>, data_pin: Pin<Output>, latch_pin: Pin<Output>) -> Self{
+impl Display {
+    pub fn new(clk_pin: Pin<Output>, data_pin: Pin<Output>, latch_pin: Pin<Output>) -> Self {
         Display {
             clk_pin,
             data_pin,
@@ -68,11 +69,19 @@ impl Display {
     }
 
     pub fn update(&mut self, display_value: impl Displayable) {
-        let display_byte:u8 = 0b0000_0001;
+        let display_byte: u8 = 0b0000_0001;
         self.latch_pin.set_low();
-        shift_out(display_byte << self.index, &mut self.clk_pin, &mut self.data_pin);
+        shift_out(
+            display_byte << self.index,
+            &mut self.clk_pin,
+            &mut self.data_pin,
+        );
         let value = display_value.display_digit(self.index);
-        shift_out(DIGITS[value as usize], &mut self.clk_pin, &mut self.data_pin);
+        shift_out(
+            DIGITS[value as usize],
+            &mut self.clk_pin,
+            &mut self.data_pin,
+        );
         self.latch_pin.set_high();
         self.index += 1;
         if self.index > 3 {
@@ -80,17 +89,19 @@ impl Display {
         }
     }
 
-    pub fn debug(&mut self){
-        let display_byte:u8 = 0b0000_0001;
+    pub fn debug(&mut self) {
+        let display_byte: u8 = 0b0000_0001;
         self.latch_pin.set_low();
         shift_out(display_byte, &mut self.clk_pin, &mut self.data_pin);
-        shift_out(DIGITS[self.index as usize], &mut self.clk_pin, &mut self.data_pin);
+        shift_out(
+            DIGITS[self.index as usize],
+            &mut self.clk_pin,
+            &mut self.data_pin,
+        );
         self.latch_pin.set_high();
         self.index += 1;
         if self.index > 1 {
             self.index = 0;
         }
-
     }
-    
 }
