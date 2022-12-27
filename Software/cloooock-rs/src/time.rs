@@ -26,7 +26,15 @@ impl Add<i8> for BPM {
     type Output = Self;
 
     fn add(self, rhs: i8) -> Self::Output {
-        BPM { bpm: (self.bpm as i16 + rhs as i16) as u16 % 10000 % 5536 }
+        let intermediate: i16 = self.bpm as i16 + rhs as i16;
+        let bpm: u16 = if (intermediate < 0) {
+            9999
+        } else if (intermediate >= 10000) {
+            0
+        } else {
+            intermediate
+        } as u16;
+        BPM { bpm }
     }
 }
 
