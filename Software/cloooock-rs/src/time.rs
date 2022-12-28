@@ -68,6 +68,6 @@ pub struct TicksPerBar {
 
 impl From<BPM> for TicksPerBar {
     fn from(bpm: BPM) -> Self {
-        TicksPerBar { ticks: (240 * TICK_RATE) / bpm.bpm as u32 }
+        TicksPerBar { ticks: (240/2 * TICK_RATE) / bpm.bpm as u32 }
     }
 }

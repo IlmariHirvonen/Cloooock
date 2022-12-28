@@ -16,9 +16,6 @@ use arduino_hal::{
 use cloooock_rs::cv_output::ClockChannel;
 use cloooock_rs::time::TICK_RATE;
 use cloooock_rs::time::TicksPerBar;
-use core::array;
-use core::borrow::BorrowMut;
-use core::cell::Cell;
 use core::cell::RefCell;
 use core::mem;
 use ufmt::{uWrite, uwriteln};
@@ -32,6 +29,7 @@ use panic_halt as _;
 const NUM_CHANNELS: u8 = 4;
 
 struct ClockChannels {
+    bar_ticks: TicksPerBar,
     channels: [ClockChannel; 4],
 }
 
@@ -39,7 +37,6 @@ struct ClockChannels {
 static TICKS: Mutex<RefCell<u32>> = Mutex::new(RefCell::new(0));
 static MASTER_BPM: Mutex<RefCell<BPM>> = Mutex::new(RefCell::new(BPM::new(120)));
 // output devices
-static mut DISPLAY: mem::MaybeUninit<Display> = mem::MaybeUninit::uninit();
 static mut CLOCK_CHANNELS: mem::MaybeUninit<ClockChannels> = mem::MaybeUninit::uninit();
 
 
@@ -82,23 +79,25 @@ fn main() -> ! {
         // SAFETY: Interrupts are not enabled at this point so we can safely write the global
         // variable here.  A memory barrier afterwards ensures the compiler won't reorder this
         // after any operation that enables interrupts.
-
-        CLOCK_CHANNELS = mem::MaybeUninit::new(ClockChannels {
-            channels: [
-                ClockChannel::new(led_0, output_0),
-                ClockChannel::new(led_1, output_1),
-                ClockChannel::new(led_2, output_2),
-                ClockChannel::new(led_3, output_3)
-            ]
+        avr_device::interrupt::free(|cs| {
+            let bpm_ref = MASTER_BPM.borrow(cs).borrow();
+            let ticks_per_bar = TicksPerBar::from(*bpm_ref).ticks;
+            CLOCK_CHANNELS = mem::MaybeUninit::new(ClockChannels {
+                bar_ticks: TicksPerBar::from(*bpm_ref),
+                channels: [
+                    ClockChannel::new(led_0, output_0,Prescaler::new(1, 2),ticks_per_bar), 
+                    ClockChannel::new(led_1, output_1,Prescaler::new(1, 3),ticks_per_bar),
+                    ClockChannel::new(led_2, output_2,Prescaler::new(1, 4),ticks_per_bar),
+                    ClockChannel::new(led_3, output_3,Prescaler::new(1, 8),ticks_per_bar)
+                ]
+            });
+            core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
         });
-        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
     }
 
     // timers
     let tmr1: TC1 = dp.TC1;
     rig_timer1(&tmr1, &mut serial);
-     //let tmr2: TC2 = dp.TC2;
-     //rig_timer2(&tmr2, &mut serial);
 
     ufmt::uwriteln!(&mut serial, "Start enable interrupts").void_unwrap();
     // Enable interrupts globally, not a replacement for the specific interrupt enable
@@ -110,14 +109,14 @@ fn main() -> ! {
     ufmt::uwriteln!(&mut serial, "Done enable interrupts").void_unwrap();
 
     loop {
-        // ufmt::uwriteln!(&mut serial, "{}!\r", enc_value).void_unwrap();
-        // unsafe {ufmt::uwriteln!(&mut serial, "{}\r", TIMER_2_VALUE).void_unwrap();}
         if let Some(change) = encoder.poll() {
             // ufmt::uwriteln!(&mut serial, "{}\r", change).void_unwrap();
-
             avr_device::interrupt::free(|cs| {
                 let mut bpm_ref = MASTER_BPM.borrow(cs).borrow_mut();
                 *bpm_ref = *bpm_ref + change;
+                unsafe {
+                    (&mut *CLOCK_CHANNELS.as_mut_ptr()).bar_ticks = TicksPerBar::from(*bpm_ref);
+                }
             });
         }
 
@@ -130,12 +129,11 @@ fn main() -> ! {
             let bpm_ref = MASTER_BPM.borrow(cs).borrow();
             let mut ticks_ref = TICKS.borrow(cs).borrow_mut();
             let state = unsafe { &mut *CLOCK_CHANNELS.as_mut_ptr() };
-            let bar_ticks = TicksPerBar::from(BPM::from(bpm_ref.bpm*4));
-            if *ticks_ref >= bar_ticks.ticks {
+            if *ticks_ref >= state.bar_ticks.ticks {
                 *ticks_ref = 0;
-                for channel in state.channels.iter_mut() {
-                    channel.update(*ticks_ref);
-                }
+            }
+            for channel in state.channels.iter_mut() {
+                channel.update(*ticks_ref);
             }
         });
     }

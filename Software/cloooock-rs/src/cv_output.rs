@@ -1,6 +1,6 @@
 use arduino_hal::port::{mode::Output, Pin};
 
-use crate::time::{TicksPerBar, BPM};
+use crate::time::{TicksPerBar, BPM, TICK_RATE};
 
 pub struct Prescaler {
     numerator: u16,
@@ -60,25 +60,29 @@ impl ClockOutput {
 
 // reset at the start of every bar.
 pub struct ClockChannel {
-    counter: u16,
     prescaler: Prescaler,
+    threshold:u32,
     output: ClockOutput,
 }
 
 impl ClockChannel {
-    pub fn new(led_pin: Pin<Output>, output_pin: Pin<Output>) -> Self {
+    pub fn new(led_pin: Pin<Output>, output_pin: Pin<Output>,prescaler:Prescaler, ticks_per_bar: u32) -> Self {
         ClockChannel {
-            counter: 0,
-            prescaler: Prescaler {
-                numerator: 1,
-                denominator: 1,
-            },
+            threshold: ticks_per_bar/prescaler.denominator as u32 *prescaler.numerator as u32,
+            prescaler,
             output: ClockOutput::new(led_pin, output_pin),
         }
     }
 
+    pub fn calculate_threshold(&mut self, bar_ticks: u32){
+        self.threshold = bar_ticks/self.prescaler.denominator as u32 *self.prescaler.numerator as u32;
+
+    }
+
     pub fn update(&mut self, ticks: u32) {
-        //let time_between_hit = 10;
-        self.output.toggle()
+        if ticks % self.threshold == 0 {
+             self.output.toggle()
+        }
+        //self.output.toggle()
     }
 }
