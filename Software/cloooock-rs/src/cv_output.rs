@@ -1,5 +1,7 @@
 use arduino_hal::port::{mode::Output, Pin};
 
+use crate::time::{TicksPerBar, BPM};
+
 pub struct Prescaler {
     numerator: u16,
     denominator: u16,
@@ -61,8 +63,6 @@ pub struct ClockChannel {
     counter: u16,
     prescaler: Prescaler,
     output: ClockOutput,
-    time_between_hit:u32,
-
 }
 
 impl ClockChannel {
@@ -74,19 +74,11 @@ impl ClockChannel {
                 denominator: 1,
             },
             output: ClockOutput::new(led_pin, output_pin),
-            time_between_hit:1000,
-
         }
     }
 
-    pub fn update(&mut self, timer_us: u32, new_time_between_hits:u32) {
-        if new_time_between_hits != self.time_between_hit {
-            self.time_between_hit = new_time_between_hits;
-
-        }
+    pub fn update(&mut self, ticks: u32) {
         //let time_between_hit = 10;
-        if timer_us % self.time_between_hit == 0 {
-            self.output.toggle()
-        }
+        self.output.toggle()
     }
 }

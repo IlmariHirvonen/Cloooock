@@ -14,8 +14,12 @@ use arduino_hal::{
     prelude::*,
 };
 use cloooock_rs::cv_output::ClockChannel;
+use cloooock_rs::time::TICK_RATE;
+use cloooock_rs::time::TicksPerBar;
 use core::array;
+use core::borrow::BorrowMut;
 use core::cell::Cell;
+use core::cell::RefCell;
 use core::mem;
 use ufmt::{uWrite, uwriteln};
 
@@ -27,33 +31,32 @@ use panic_halt as _;
 
 const NUM_CHANNELS: u8 = 4;
 
-struct InterruptState2 {
+struct ClockChannels {
     channels: [ClockChannel; 4],
 }
 
 // global mutable state
-static mut MASTER_BPM: Mutex<Cell<BPM>> = Mutex::new(Cell::new(BPM::new(120)));
+static TICKS: Mutex<RefCell<u32>> = Mutex::new(RefCell::new(0));
+static MASTER_BPM: Mutex<RefCell<BPM>> = Mutex::new(RefCell::new(BPM::new(120)));
+// output devices
 static mut DISPLAY: mem::MaybeUninit<Display> = mem::MaybeUninit::uninit();
-static mut INTERRUPT_STATE2: mem::MaybeUninit<InterruptState2> = mem::MaybeUninit::uninit();
-static mut TIMER_2_VALUE: u32 = 0;
-static mut TENTH_MS_PER_BAR:u32 =  20000;
+static mut CLOCK_CHANNELS: mem::MaybeUninit<ClockChannels> = mem::MaybeUninit::uninit();
 
-// Pinout
-//
-// Purpose  Arduino Pin     AVR Pin
-// Led 1    A3              PC3
-// Led 2    A2              PC2
-// Led 3    A1              PC1
-// Led 4    A0              PC0
 
 #[arduino_hal::entry]
 fn main() -> ! {
     let dp = arduino_hal::Peripherals::take().unwrap();
     let pins = arduino_hal::pins!(dp);
     let mut adc = arduino_hal::Adc::new(dp.ADC, Default::default());
-
+    
     let mut serial = arduino_hal::default_serial!(dp, pins, 57600);
-
+    
+    // Pinout
+    // Purpose  Arduino Pin     AVR Pin
+    // Led 1    A3              PC3
+    // Led 2    A2              PC2
+    // Led 3    A1              PC1
+    // Led 4    A0              PC0
     let led_0 = pins.a0.into_output().downgrade();
     let led_1 = pins.a1.into_output().downgrade();
     let led_2 = pins.a2.into_output().downgrade();
@@ -72,9 +75,6 @@ fn main() -> ! {
     let display_clk_pin = pins.d5.into_output().downgrade();
     let display_data_pin = pins.d6.into_output().downgrade();
     let mut display = Display::new(display_clk_pin, display_data_pin, display_latch_pin);
-    unsafe {
-        //DISPLAY = mem::MaybeUninit::new(Display::new(display_clk_pin, display_data_pin, display_latch_pin));
-    }
 
     let mut encoder = Encoder::new(adc, encoder_clk_channel, encoder_dt_channel);
 
@@ -83,7 +83,7 @@ fn main() -> ! {
         // variable here.  A memory barrier afterwards ensures the compiler won't reorder this
         // after any operation that enables interrupts.
 
-        INTERRUPT_STATE2 = mem::MaybeUninit::new(InterruptState2 {
+        CLOCK_CHANNELS = mem::MaybeUninit::new(ClockChannels {
             channels: [
                 ClockChannel::new(led_0, output_0),
                 ClockChannel::new(led_1, output_1),
@@ -115,22 +115,28 @@ fn main() -> ! {
         if let Some(change) = encoder.poll() {
             // ufmt::uwriteln!(&mut serial, "{}\r", change).void_unwrap();
 
-            let mut bpm2 = BPM::new(Default::default());
-            avr_device::interrupt::free(|cs| unsafe {
-                let cell = MASTER_BPM.borrow(cs);
-                let mut bpm = cell.take();
-                bpm = bpm + change;
-                bpm2 = bpm;
-                //display.update(bpm2);
-                cell.set(bpm);
+            avr_device::interrupt::free(|cs| {
+                let mut bpm_ref = MASTER_BPM.borrow(cs).borrow_mut();
+                *bpm_ref = *bpm_ref + change;
             });
-            ufmt::uwriteln!(&mut serial, "{}\r", bpm2.bpm).void_unwrap();
         }
-        avr_device::interrupt::free(|cs| unsafe {
-            let cell = MASTER_BPM.borrow(cs);
-            let mut bpm = cell.take();
-            display.update(bpm);
-            cell.set(bpm);
+
+        avr_device::interrupt::free(|cs| {
+            let bpm_ref = MASTER_BPM.borrow(cs).borrow();
+            display.update(*bpm_ref);
+        });
+
+        avr_device::interrupt::free(|cs| {
+            let bpm_ref = MASTER_BPM.borrow(cs).borrow();
+            let mut ticks_ref = TICKS.borrow(cs).borrow_mut();
+            let state = unsafe { &mut *CLOCK_CHANNELS.as_mut_ptr() };
+            let bar_ticks = TicksPerBar::from(BPM::from(bpm_ref.bpm*4));
+            if *ticks_ref >= bar_ticks.ticks {
+                *ticks_ref = 0;
+                for channel in state.channels.iter_mut() {
+                    channel.update(*ticks_ref);
+                }
+            }
         });
     }
 }
@@ -151,7 +157,7 @@ fn rig_timer1<W: uWrite<Error = void::Void>>(tmr1: &TC1, serial: &mut W) {
     use arduino_hal::clock::Clock;
 
     const ARDUINO_UNO_CLOCK_FREQUENCY_HZ: u32 = arduino_hal::DefaultClock::FREQ;
-    const CLOCK_SOURCE: CS1_A = CS1_A::PRESCALE_64;
+    const CLOCK_SOURCE: CS1_A = CS1_A::PRESCALE_8;
     let clock_divisor: u32 = match CLOCK_SOURCE {
         CS1_A::DIRECT => 1,
         CS1_A::PRESCALE_8 => 8,
@@ -165,7 +171,7 @@ fn rig_timer1<W: uWrite<Error = void::Void>>(tmr1: &TC1, serial: &mut W) {
         }
     };
 
-    let ticks = calc_overflow(ARDUINO_UNO_CLOCK_FREQUENCY_HZ, 10_000, clock_divisor) as u16;
+    let ticks = calc_overflow(ARDUINO_UNO_CLOCK_FREQUENCY_HZ, TICK_RATE, clock_divisor) as u16;
     ufmt::uwriteln!(
         serial,
         "configuring timer output compare register = {}\r",
@@ -227,27 +233,9 @@ fn rig_timer2<W: uWrite<Error = void::Void>>(tmr2: &TC2, serial: &mut W) {
 
 #[avr_device::interrupt(atmega328p)]
 fn TIMER1_COMPA() {
-    let state = unsafe { &mut *INTERRUPT_STATE2.as_mut_ptr() };
-    unsafe {
-        TIMER_2_VALUE += 1;
-
-        for channel in state.channels.iter_mut() {
-            channel.update(TIMER_2_VALUE, TENTH_MS_PER_BAR);
-        }
-    }
-}
-
-#[avr_device::interrupt(atmega328p)]
-fn TIMER2_COMPA() {
-    let display = unsafe {
-        // SAFETY: Interrupts will only be enabled after global state init
-        &mut *DISPLAY.as_mut_ptr()
-    };
-
-    avr_device::interrupt::free(|cs| unsafe {
-        let cell = MASTER_BPM.borrow(cs);
-        let bpm = cell.take();
-        display.update(bpm);
-        cell.set(bpm);
-    })
+    avr_device::interrupt::free(|cs| {
+        // Interrupts are disabled here
+        let mut ticks_ref = TICKS.borrow(cs).borrow_mut();
+        *ticks_ref += 1;
+    });
 }
