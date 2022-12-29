@@ -58,11 +58,14 @@ fn main() -> ! {
     let led_2 = pins.a2.into_output().downgrade();
     let led_3 = pins.a3.into_output().downgrade();
 
+    let pause_button = pins.a4.into_floating_input().downgrade();
+    let mut pause_button_state = false;
+    let mut pause_button_state_changed = false;
+
     let output_0 = pins.d7.into_output().downgrade();
     let output_1 = pins.d10.into_output().downgrade();
     let output_2 = pins.d8.into_output().downgrade();
     let output_3 = pins.d9.into_output().downgrade();
-
     // pinout
     // let encoder_button = pins.d2.into_input().downgrade();
     let encoder_dt_channel = &adc::channel::ADC6.into_channel();
@@ -108,6 +111,12 @@ fn main() -> ! {
     ufmt::uwriteln!(&mut serial, "Done enable interrupts").void_unwrap();
 
     loop {
+        if pause_button.is_high() && !pause_button_state_changed {
+            pause_button_state = !pause_button_state;
+            pause_button_state_changed = true;
+        } else if pause_button.is_low() {
+            pause_button_state_changed = false;
+        }
         if let Some(change) = encoder.poll() {
             // ufmt::uwriteln!(&mut serial, "{}\r", change).void_unwrap();
             avr_device::interrupt::free(|cs| {
@@ -131,20 +140,26 @@ fn main() -> ! {
             display.update(*bpm_ref);
         });
 
-        avr_device::interrupt::free(|cs| {
-            let bpm_ref = MASTER_BPM.borrow(cs).borrow();
-            let mut ticks_ref = TICKS.borrow(cs).borrow_mut();
-            let state = unsafe { &mut *CLOCK_CHANNELS.as_mut_ptr() };
-            if *ticks_ref >= state.bar_ticks.ticks {
-                *ticks_ref = 0;
-                for channel in state.channels.iter_mut() {
-                    channel.reset_threshold();
+
+        if pause_button_state {
+            //don't update outputs.
+        }
+        else {
+            avr_device::interrupt::free(|cs| {
+                let bpm_ref = MASTER_BPM.borrow(cs).borrow();
+                let mut ticks_ref = TICKS.borrow(cs).borrow_mut();
+                let state = unsafe { &mut *CLOCK_CHANNELS.as_mut_ptr() };
+                if *ticks_ref >= state.bar_ticks.ticks {
+                    *ticks_ref = 0;
+                    for channel in state.channels.iter_mut() {
+                        channel.reset_threshold();
+                    }
                 }
-            }
-            for channel in state.channels.iter_mut() {
-                channel.update(*ticks_ref);
-            }
-        });
+                for channel in state.channels.iter_mut() {
+                    channel.update(*ticks_ref);
+                }
+            });
+        }
     }
 }
 
@@ -197,6 +212,11 @@ fn rig_timer1<W: uWrite<Error = void::Void>>(tmr1: &TC1, serial: &mut W) {
     tmr1.ocr1a.write(|w| unsafe { w.bits(ticks) });
     tmr1.timsk1.write(|w| w.ocie1a().set_bit()); //enable this specific interrupt
 }
+
+fn pause() {
+
+}
+
 
 #[avr_device::interrupt(atmega328p)]
 fn TIMER1_COMPA() {
