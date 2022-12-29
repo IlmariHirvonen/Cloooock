@@ -3,9 +3,8 @@
 #![feature(abi_avr_interrupt)]
 
 use avr_device::atmega328p::TC1;
-use avr_device::atmega328p::TC2;
 use avr_device::{
-    atmega328p::tc1::tccr1b::CS1_A, atmega328p::tc2::tccr2b::CS2_A, interrupt::Mutex,
+    atmega328p::tc1::tccr1b::CS1_A, interrupt::Mutex,
 };
 
 use arduino_hal::{
@@ -86,8 +85,8 @@ fn main() -> ! {
                 bar_ticks: TicksPerBar::from(*bpm_ref),
                 channels: [
                     ClockChannel::new(led_0, output_0,Prescaler::new(1, 2),ticks_per_bar), 
-                    ClockChannel::new(led_1, output_1,Prescaler::new(1, 3),ticks_per_bar),
-                    ClockChannel::new(led_2, output_2,Prescaler::new(1, 4),ticks_per_bar),
+                    ClockChannel::new(led_1, output_1,Prescaler::new(1, 4),ticks_per_bar),
+                    ClockChannel::new(led_2, output_2,Prescaler::new(1, 6),ticks_per_bar),
                     ClockChannel::new(led_3, output_3,Prescaler::new(1, 8),ticks_per_bar)
                 ]
             });
@@ -116,6 +115,13 @@ fn main() -> ! {
                 *bpm_ref = *bpm_ref + change;
                 unsafe {
                     (&mut *CLOCK_CHANNELS.as_mut_ptr()).bar_ticks = TicksPerBar::from(*bpm_ref);
+                    
+                    
+                }
+                let state = unsafe { &mut *CLOCK_CHANNELS.as_mut_ptr() };
+                let ticks_per_bar = TicksPerBar::from(*bpm_ref).ticks;
+                for channel in state.channels.iter_mut() {
+                    channel.calculate_threshold(ticks_per_bar);
                 }
             });
         }
@@ -131,6 +137,9 @@ fn main() -> ! {
             let state = unsafe { &mut *CLOCK_CHANNELS.as_mut_ptr() };
             if *ticks_ref >= state.bar_ticks.ticks {
                 *ticks_ref = 0;
+                for channel in state.channels.iter_mut() {
+                    channel.reset_threshold();
+                }
             }
             for channel in state.channels.iter_mut() {
                 channel.update(*ticks_ref);
@@ -187,46 +196,6 @@ fn rig_timer1<W: uWrite<Error = void::Void>>(tmr1: &TC1, serial: &mut W) {
     });
     tmr1.ocr1a.write(|w| unsafe { w.bits(ticks) });
     tmr1.timsk1.write(|w| w.ocie1a().set_bit()); //enable this specific interrupt
-}
-
-fn rig_timer2<W: uWrite<Error = void::Void>>(tmr2: &TC2, serial: &mut W) {
-    /*
-     https://ww1.microchip.com/downloads/en/DeviceDoc/Atmel-7810-Automotive-Microcontrollers-ATmega328P_Datasheet.pdf
-     section 15.11
-    */
-    const CLOCK_SOURCE: CS2_A = CS2_A::PRESCALE_256;
-    let clock_divisor: u32 = match CLOCK_SOURCE {
-        CS2_A::DIRECT => 1,
-        CS2_A::PRESCALE_8 => 8,
-        CS2_A::PRESCALE_32 => 32,
-        CS2_A::PRESCALE_64 => 64,
-        CS2_A::PRESCALE_128 => 128,
-        CS2_A::PRESCALE_256 => 256,
-        CS2_A::PRESCALE_1024 => 1024,
-        CS2_A::NO_CLOCK => {
-            uwriteln!(serial, "uhoh, code tried to set the clock source to something other than a static prescaler {}", CLOCK_SOURCE as usize)
-                .void_unwrap();
-            1
-        }
-    };
-
-    let ticks = calc_overflow(16_000_000, 50, clock_divisor) as u8;
-    ufmt::uwriteln!(
-        serial,
-        "configuring timer output compare register = {}\r",
-        ticks
-    )
-    .void_unwrap();
-
-    tmr2.tccr2a.write(|w| w.wgm2().bits(0b00));
-    tmr2.tccr2b.write(|w| {
-        w.cs2()
-            .variant(CLOCK_SOURCE)
-            .wgm22()
-            .bit(true)
-    });
-    tmr2.ocr2a.write(|w| unsafe { w.bits(ticks) });
-    tmr2.timsk2.write(|w| w.ocie2a().set_bit()); //enable this specific interrupt
 }
 
 #[avr_device::interrupt(atmega328p)]
