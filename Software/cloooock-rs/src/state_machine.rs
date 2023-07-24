@@ -15,16 +15,19 @@ impl DeviceState {
         match (self, button) {
             (DeviceState::Running, ButtonPressed::PauseButton) => DeviceState::Paused,
             (DeviceState::Running, ButtonPressed::EncoderButton) => DeviceState::SelectingChannel,
-                        
+
             (DeviceState::Paused, ButtonPressed::PauseButton) => DeviceState::Running,
             (DeviceState::Paused, ButtonPressed::EncoderButton) => DeviceState::SelectingChannel,
-            
+
             (DeviceState::SelectingChannel, ButtonPressed::PauseButton) => DeviceState::Running,
-            (DeviceState::SelectingChannel, ButtonPressed::EncoderButton) => DeviceState::SettingDivisionState,
+            (DeviceState::SelectingChannel, ButtonPressed::EncoderButton) => {
+                DeviceState::SettingDivisionState
+            }
 
             (DeviceState::SettingDivisionState, ButtonPressed::PauseButton) => DeviceState::Running,
-            (DeviceState::SettingDivisionState, ButtonPressed::EncoderButton) => DeviceState::SelectingChannel,
-
+            (DeviceState::SettingDivisionState, ButtonPressed::EncoderButton) => {
+                DeviceState::SelectingChannel
+            }
         }
     }
 }

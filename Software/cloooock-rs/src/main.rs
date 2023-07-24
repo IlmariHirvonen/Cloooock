@@ -3,30 +3,27 @@
 #![feature(abi_avr_interrupt)]
 
 use avr_device::atmega328p::TC1;
-use avr_device::{
-    atmega328p::tc1::tccr1b::CS1_A, interrupt::Mutex,
-};
+use avr_device::{atmega328p::tc1::tccr1b::CS1_A, interrupt::Mutex};
 
 use arduino_hal::{
     adc::{self},
-    port::{mode::Output, Pin},
     prelude::*,
 };
 use cloooock_rs::cv_output::ClockChannel;
-use cloooock_rs::state_machine::{DeviceState, self, ButtonPressed};
-use cloooock_rs::time::TICK_RATE;
+use cloooock_rs::state_machine::{ButtonPressed, DeviceState};
 use cloooock_rs::time::TicksPerBar;
+use cloooock_rs::time::TICK_RATE;
 use core::cell::RefCell;
 use core::mem;
 use ufmt::{uWrite, uwriteln};
 
-use cloooock_rs::cv_output::{ClockOutput, Prescaler};
+use cloooock_rs::cv_output::Prescaler;
 use cloooock_rs::display::Display;
-use cloooock_rs::{display::Displayable, encoder::Encoder};
 use cloooock_rs::time::BPM;
+use cloooock_rs::encoder::Encoder;
 use panic_halt as _;
 
-const NUM_CHANNELS: u8 = 4;
+//const NUM_CHANNELS: u8 = 4;
 const MIN_BPM: u16 = 30;
 const MAX_BPM: u16 = 9999;
 
@@ -41,17 +38,16 @@ static MASTER_BPM: Mutex<RefCell<BPM>> = Mutex::new(RefCell::new(BPM::new(120)))
 // output devices
 static mut CLOCK_CHANNELS: mem::MaybeUninit<ClockChannels> = mem::MaybeUninit::uninit();
 
-
 #[arduino_hal::entry]
 fn main() -> ! {
     let mut state = DeviceState::Running;
     let mut selected_channel: i8 = 0;
     let dp = arduino_hal::Peripherals::take().unwrap();
     let pins = arduino_hal::pins!(dp);
-    let mut adc = arduino_hal::Adc::new(dp.ADC, Default::default());
-    
+    let adc = arduino_hal::Adc::new(dp.ADC, Default::default());
+
     let mut serial = arduino_hal::default_serial!(dp, pins, 57600);
-    
+
     // Pinout
     // Purpose  Arduino Pin     AVR Pin
     // Led 1    A3              PC3
@@ -64,7 +60,7 @@ fn main() -> ! {
     let led_3 = pins.a3.into_output().downgrade();
 
     let pause_button = pins.a4.into_floating_input().downgrade();
-    let mut pause_button_was_pressed = false;
+    let mut pause_button_was_pressed: bool;
     let mut pause_button_previous_state = false;
 
     let output_0 = pins.d7.into_output().downgrade();
@@ -76,16 +72,19 @@ fn main() -> ! {
     let encoder_dt_channel = &adc::channel::ADC6.into_channel();
     let encoder_clk_channel = &adc::channel::ADC7.into_channel();
     let encoder_button = pins.d2.into_floating_input().downgrade();
-    let mut encoder_button_was_pressed = false;
+    let mut encoder_button_was_pressed: bool;
     let mut encoder_button_previous_state = false;
-
 
     let display_latch_pin = pins.d4.into_output().downgrade();
     let display_clk_pin = pins.d5.into_output().downgrade();
     let display_data_pin = pins.d6.into_output().downgrade();
     let mut display = Display::new(display_clk_pin, display_data_pin, display_latch_pin);
 
-    let mut encoder = Encoder::new(adc, encoder_clk_channel, encoder_dt_channel, &encoder_button);
+    let mut encoder = Encoder::new(
+        adc,
+        encoder_clk_channel,
+        encoder_dt_channel,
+    );
 
     unsafe {
         // SAFETY: Interrupts are not enabled at this point so we can safely write the global
@@ -97,11 +96,11 @@ fn main() -> ! {
             CLOCK_CHANNELS = mem::MaybeUninit::new(ClockChannels {
                 bar_ticks: TicksPerBar::from(*bpm_ref),
                 channels: [
-                    ClockChannel::new(led_0, output_0,Prescaler::new(1, 2),ticks_per_bar), 
-                    ClockChannel::new(led_1, output_1,Prescaler::new(1, 4),ticks_per_bar),
-                    ClockChannel::new(led_2, output_2,Prescaler::new(1, 6),ticks_per_bar),
-                    ClockChannel::new(led_3, output_3,Prescaler::new(1, 8),ticks_per_bar)
-                ]
+                    ClockChannel::new(led_0, output_0, Prescaler::new(1, 2), ticks_per_bar),
+                    ClockChannel::new(led_1, output_1, Prescaler::new(1, 4), ticks_per_bar),
+                    ClockChannel::new(led_2, output_2, Prescaler::new(1, 6), ticks_per_bar),
+                    ClockChannel::new(led_3, output_3, Prescaler::new(1, 8), ticks_per_bar),
+                ],
             });
             core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
         });
@@ -121,7 +120,6 @@ fn main() -> ! {
     ufmt::uwriteln!(&mut serial, "Done enable interrupts").void_unwrap();
 
     loop {
-
         if pause_button_previous_state && pause_button.is_high() {
             pause_button_was_pressed = true;
         } else {
@@ -136,19 +134,20 @@ fn main() -> ! {
         }
         encoder_button_previous_state = encoder_button.is_low();
 
-
-
         match state {
             DeviceState::Running => {
                 if let Some(change) = encoder.poll() {
                     avr_device::interrupt::free(|cs| {
                         let mut bpm_ref = MASTER_BPM.borrow(cs).borrow_mut();
-                        if !((bpm_ref.bpm <= MIN_BPM && change < 0) || (bpm_ref.bpm >= MAX_BPM && change > 0 )) {
+                        if !((bpm_ref.bpm <= MIN_BPM && change < 0)
+                            || (bpm_ref.bpm >= MAX_BPM && change > 0))
+                        {
                             *bpm_ref = *bpm_ref + change;
                         }
-        
+
                         unsafe {
-                            (&mut *CLOCK_CHANNELS.as_mut_ptr()).bar_ticks = TicksPerBar::from(*bpm_ref);
+                            (&mut *CLOCK_CHANNELS.as_mut_ptr()).bar_ticks =
+                                TicksPerBar::from(*bpm_ref);
                         }
                         let state = unsafe { &mut *CLOCK_CHANNELS.as_mut_ptr() };
                         let ticks_per_bar = TicksPerBar::from(*bpm_ref).ticks;
@@ -158,7 +157,7 @@ fn main() -> ! {
                     });
                 }
                 avr_device::interrupt::free(|cs| {
-                    let bpm_ref = MASTER_BPM.borrow(cs).borrow();
+                    //let bpm_ref = MASTER_BPM.borrow(cs).borrow();
                     let mut ticks_ref = TICKS.borrow(cs).borrow_mut();
                     let state = unsafe { &mut *CLOCK_CHANNELS.as_mut_ptr() };
                     if *ticks_ref >= state.bar_ticks.ticks {
@@ -211,10 +210,9 @@ fn main() -> ! {
                     for channel in clock_channels.channels.iter_mut() {
                         channel.set_led(false);
                     }
-                    clock_channels.channels[selected_channel as usize].set_led(true); 
+                    clock_channels.channels[selected_channel as usize].set_led(true);
                 }
                 if encoder_button_was_pressed {
-                    
                     for channel in clock_channels.channels.iter_mut() {
                         channel.set_led(false);
                     }
@@ -231,15 +229,16 @@ fn main() -> ! {
                     let bpm_ref = MASTER_BPM.borrow(cs).borrow();
                     display.update(*bpm_ref);
                 });
-                
             }
             DeviceState::SettingDivisionState => {
-                let clock_channels = unsafe { &mut *CLOCK_CHANNELS.as_mut_ptr() };  
+                let clock_channels = unsafe { &mut *CLOCK_CHANNELS.as_mut_ptr() };
                 if let Some(change) = encoder.poll() {
                     clock_channels.channels[selected_channel as usize].set_led(true);
-                    clock_channels.channels[selected_channel as usize].update_denominator(change, clock_channels.bar_ticks.ticks);
+                    clock_channels.channels[selected_channel as usize]
+                        .update_denominator(change, clock_channels.bar_ticks.ticks);
                 }
-                display.update(clock_channels.channels[selected_channel as usize].get_denominator());
+                display
+                    .update(clock_channels.channels[selected_channel as usize].get_denominator());
                 if encoder_button_was_pressed {
                     for channel in clock_channels.channels.iter_mut() {
                         channel.set_led(false);
@@ -255,8 +254,6 @@ fn main() -> ! {
                 }
             }
         }
-
-        
     }
 }
 

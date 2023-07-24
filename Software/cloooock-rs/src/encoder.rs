@@ -1,20 +1,15 @@
 use arduino_hal::{
     adc::{self, Channel},
     clock::MHz16,
-    hal::{usart::Usart0},
+    hal::usart::Usart0,
     prelude::*,
-    Adc, Usart,
-    port::{mode::{PullUp, Input, Floating}, Pin}
+    Adc,
 };
-
-
-use core::prelude::*;
 
 pub struct Encoder<'a> {
     adc: Adc,
     clk_channel: &'a Channel,
     dt_channel: &'a Channel,
-    button_channel: &'a Pin<Input<Floating>>,
     last_clk: bool,
 }
 
@@ -23,12 +18,11 @@ impl<'a> Encoder<'a> {
         adc.read_blocking(channel)
     }
 
-    pub fn new(adc: Adc, clk_channel: &'a Channel, dt_channel: &'a Channel, button_channel: &'a Pin<Input<Floating>>) -> Self {
+    pub fn new(adc: Adc, clk_channel: &'a Channel, dt_channel: &'a Channel) -> Self {
         Encoder {
             adc,
             clk_channel,
             dt_channel,
-            button_channel,
             last_clk: false,
         }
     }
