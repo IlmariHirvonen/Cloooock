@@ -13,6 +13,13 @@ impl Prescaler {
             denominator,
         }
     }
+    pub fn set_numerator(&mut self, numerator: u16) {
+        self.numerator = numerator;
+    }
+
+    pub fn set_denominator(&mut self, denominator: u16) {
+        self.denominator = denominator;
+    }
 }
 
 pub struct ClockOutput {
@@ -50,12 +57,7 @@ impl ClockOutput {
         }
     }
 
-    pub fn set_numerator() {
-        todo!();
-    }
-    pub fn set_denominator() {
-        todo!();
-    }
+    
 }
 
 // reset at the start of every bar.
@@ -78,11 +80,11 @@ impl ClockChannel {
         }
     }
 
-    pub fn calculate_threshold(&mut self, bar_ticks: u32){
+    pub fn calculate_threshold(&mut self, bar_ticks: u32) {
         self.threshold_interval = bar_ticks/self.prescaler.denominator as u32 *self.prescaler.numerator as u32;
         
         // if removed stops rapid pulses but it takes time for all channels to catch up and sync
-        self.reset_threshold(); 
+        // self.reset_threshold(); 
     }
     pub fn reset_threshold(&mut self) {
         self.threshold = self.threshold_interval;
@@ -101,5 +103,37 @@ impl ClockChannel {
         }
         self.previous_ticks = ticks;
         //self.output.toggle()
+    }
+
+    pub fn set_led(&mut self, state: bool) {
+        if state {
+            self.output.led_pin.set_high();
+        } else {
+            self.output.led_pin.set_low();
+        }
+        
+    }
+
+    pub fn set_numerator(&mut self, numerator: u16) {
+        self.prescaler.numerator = numerator;
+    }
+    pub fn update_denominator(&mut self, change: i8, bar_ticks: u32) {
+        if change < 0 {
+            if self.prescaler.denominator > 1 {
+                self.prescaler.denominator -= 1;
+            } else {
+                self.prescaler.denominator = 128;
+            }
+        } else if change > 0 {
+            if self.prescaler.denominator < 128 {
+                self.prescaler.denominator += 1;
+            } else {
+                self.prescaler.denominator = 1;
+            }
+        }
+        self.calculate_threshold(bar_ticks);
+    }
+    pub fn get_denominator(&self) -> u16 {
+        self.prescaler.denominator
     }
 }
